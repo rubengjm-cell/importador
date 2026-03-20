@@ -46,7 +46,7 @@ def recolectar_masivo():
     print("\n🇺🇾 INICIANDO RECOLECCIÓN ESPECÍFICA PARA URUGUAY...")
     
     # Escaneamos 10 páginas (aprox 200 productos)
-    for pagina in range(1, 50): 
+    for pagina in range(1, 100): 
         print(f"🛰️ Buscando en Uruguay - Página {pagina}...")
         
         # API de Open Food Facts con filtros específicos
