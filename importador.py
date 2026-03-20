@@ -1,5 +1,5 @@
 def recolectar_masivo():
-    print("🇺🇾 INICIANDO RECOLECCIÓN ESPECÍFICA PARA URUGUAY...")
+    print("🇺🇾 INICIANDO RECOLECCIÓN ESPECÍFICA PARA URUGUAY...v2")
     
     # Bajamos el número de páginas para que no nos bloqueen (probá con 10 primero)
     for pagina in range(1, 11): 
