@@ -50,12 +50,12 @@ def recolectar_masivo():
         print(f"🛰️ Buscando en Uruguay - Página {pagina}...")
         
         # API de Open Food Facts con filtros específicos
-        url = "https://world.openfoodfacts.org/api/v2/search"
+        url = "https://uy.openfoodfacts.org/api/v2/search"
         params = {
-            "countries_tags_en": "uruguay",
+            #"countries_tags_en": "uruguay",
             "labels_tags_en": "vegan",
             "page": pagina,
-            "page_size": 20,
+            "page_size": 100,
             "fields": "product_name,product_name_es,brands,code,image_url,ingredients_text_es,countries"
         }
         
