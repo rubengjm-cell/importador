@@ -9,9 +9,7 @@ import time
 # 1. CONFIGURACIÓN DE SEGURIDAD Y FIREBASE
 # ==========================================
 def inicializar_firebase():
-    """Conecta con Firebase usando la llave de GitHub (Nube) o el archivo local (PC)."""
     if "FIREBASE_KEY" in os.environ:
-        # CASO GITHUB ACTIONS: Lee el 'Secret' que cargaste en la web
         try:
             key_dict = json.loads(os.environ["FIREBASE_KEY"])
             cred = credentials.Certificate(key_dict)
@@ -20,7 +18,6 @@ def inicializar_firebase():
             print(f"❌ Error al procesar FIREBASE_KEY: {e}")
             return None
     else:
-        # CASO LOCAL (Tu PC): Busca el archivo .json en la carpeta
         try:
             cred = credentials.Certificate('firebase-key.json')
             print("🏠 Conectado a Firebase usando archivo local.")
@@ -32,30 +29,27 @@ def inicializar_firebase():
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
-# Inicializamos la base de datos
 db = inicializar_firebase()
 
 # ==========================================
-# 2. FUNCIÓN DE RECOLECCIÓN PARA URUGUAY
+# 2. FUNCIÓN DE RECOLECCIÓN DUAL (TEXTO + CÓDIGO 773)
 # ==========================================
 def recolectar_masivo():
     if not db:
         print("❌ Error: Base de datos no disponible. Abortando.")
         return
 
-    print("\n🇺🇾 INICIANDO RECOLECCIÓN ESPECÍFICA PARA URUGUAY...")
+    print("\n🇺🇾 INICIANDO BÚSQUEDA DUAL (País: Uruguay OR Prefijo: 773)...")
     
-    # Escaneamos 10 páginas (aprox 200 productos)
-    for pagina in range(1, 100): 
-        print(f"🛰️ Buscando en Uruguay - Página {pagina}...")
+    # Aumentamos a 50 páginas porque al buscar "vegan" global hay mucho más que filtrar
+    for pagina in range(1, 51): 
+        print(f"🛰️ Analizando lote de productos veganos - Página {pagina}...")
         
-        # API de Open Food Facts con filtros específicos
-        url = "https://uy.openfoodfacts.org/api/v2/search"
+        url = "https://world.openfoodfacts.org/api/v2/search"
         params = {
-            #"countries_tags_en": "uruguay",
-            "labels_tags_en": "vegan",
+            "labels_tags_en": "vegan", # Buscamos veganos a nivel global
             "page": pagina,
-            "page_size": 100,
+            "page_size": 100, # Lotes grandes para procesar más rápido
             "fields": "product_name,product_name_es,brands,code,image_url,ingredients_text_es,countries"
         }
         
@@ -72,57 +66,68 @@ def recolectar_masivo():
                 continue
 
             if response.status_code != 200:
-                print(f"⚠️ Error {response.status_code} en página {pagina}. Saltando...")
+                print(f"⚠️ Error {response.status_code} en página {pagina}.")
                 continue
                 
             data = response.json()
             productos = data.get('products', [])
 
             if not productos:
-                print(f"🏁 No hay más productos uruguayos en la página {pagina}.")
                 break
 
             batch = db.batch()
-            conteo = 0
+            conteo_uruguay = 0
 
             for p in productos:
-                codigo = p.get('code')
+                codigo = str(p.get('code', ''))
                 if not codigo: continue
 
-                doc_ref = db.collection('productos').document(codigo)
+                # --- FILTRO DUAL ---
+                # Condición A: El código empieza con 773 (Prefijo GS1 Uruguay)
+                es_773 = codigo.startswith('773')
                 
-                # Buscamos el mejor nombre disponible
-                nombre = p.get('product_name_es') or p.get('product_name') or 'Producto sin nombre'
-                
-                datos = {
-                    'nombre': nombre,
-                    'marca': p.get('brands', 'Marca desconocida'),
-                    'codigo': codigo,
-                    'es_vegano': True,
-                    'imagen': p.get('image_url', ''),
-                    'ingredientes': p.get('ingredients_text_es') or "No detallados en la base",
-                    'paises_venta': p.get('countries', 'Uruguay'),
-                    'fuente': f"https://world.openfoodfacts.org/product/{codigo}",
-                    'actualizado': firestore.SERVER_TIMESTAMP
-                }
-                
-                batch.set(doc_ref, datos, merge=True)
-                conteo += 1
+                # Condición B: El texto de países contiene "uruguay"
+                paises = str(p.get('countries', '')).lower()
+                es_pais_uruguay = 'uruguay' in paises
 
-            batch.commit()
-            print(f"✅ Página {pagina}: {conteo} productos sincronizados con Firebase.")
+                # SI CUMPLE ALGUNA DE LAS DOS, LO GUARDAMOS
+                if es_773 or es_pais_uruguay:
+                    doc_ref = db.collection('productos').document(codigo)
+                    nombre = p.get('product_name_es') or p.get('product_name') or 'Producto sin nombre'
+                    
+                    # Identificamos por qué se guardó para saber la calidad del dato
+                    metodo = "Por Prefijo 773" if es_773 else "Por Etiqueta Uruguay"
+                    if es_773 and es_pais_uruguay: metodo = "Detección Completa"
+
+                    datos = {
+                        'nombre': nombre,
+                        'marca': p.get('brands', 'Marca desconocida'),
+                        'codigo': codigo,
+                        'es_vegano': True,
+                        'imagen': p.get('image_url', ''),
+                        'ingredientes': p.get('ingredients_text_es') or "No detallados",
+                        'paises_venta': p.get('countries', 'Uruguay'),
+                        'fuente': f"https://world.openfoodfacts.org/product/{codigo}",
+                        'metodo_deteccion': metodo,
+                        'actualizado': firestore.SERVER_TIMESTAMP
+                    }
+                    
+                    batch.set(doc_ref, datos, merge=True)
+                    conteo_uruguay += 1
+
+            if conteo_uruguay > 0:
+                batch.commit()
+                print(f"✅ Página {pagina}: Se encontraron {conteo_uruguay} productos uruguayos.")
+            else:
+                print(f"ℹ️ Página {pagina}: Sin novedades para Uruguay.")
             
-            # Pausa para evitar bloqueos
-            time.sleep(3)
+            time.sleep(2) # Pausa amigable
 
         except Exception as e:
-            print(f"❌ Error crítico en página {pagina}: {e}")
+            print(f"❌ Error en página {pagina}: {e}")
             break
 
-    print("\n🏆 ¡PROCESO TERMINADO! Base de datos de Uruguay actualizada.")
+    print("\n🏆 ¡PROCESO TERMINADO! Base de datos sincronizada.")
 
-# ==========================================
-# 3. DISPARADOR DE EJECUCIÓN
-# ==========================================
 if __name__ == "__main__":
     recolectar_masivo()
