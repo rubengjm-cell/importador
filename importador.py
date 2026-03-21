@@ -22,7 +22,7 @@ def inicializar_firebase():
     else:
         try:
             cred = credentials.Certificate('firebase-key.json')
-            print("🏠 Conectado a Firebase usando archivo local.")
+            print("🏠 Conectado a Firebase localmente.")
         except: return None
 
     if not firebase_admin._apps:
@@ -32,35 +32,35 @@ def inicializar_firebase():
 db = inicializar_firebase()
 
 # ==========================================
-# 2. FUNCIÓN DE RECOLECCIÓN CON REINTENTOS
+# 2. FUNCIÓN DE RECOLECCIÓN EXPANDIDA
 # ==========================================
 def recolectar_masivo():
     if not db: return
 
-    # Configurar reintentos automáticos a nivel de red
     session = requests.Session()
     retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
     session.mount('https://', HTTPAdapter(max_retries=retries))
 
-    print("\n🇺🇾 INICIANDO RECOLECCIÓN REFORZADA (Uruguay)...")
+    print("\n🇺🇾 INICIANDO RECOLECCIÓN EXPANDIDA (Sello + Análisis de Ingredientes)...")
     
-    for pagina in range(1, 11): 
-        print(f"🛰️ Intentando conectar con lote {pagina}...")
+    # Traemos TODO el catálogo de Uruguay (hasta 5000 productos para analizar)
+    for pagina in range(1, 51): 
+        print(f"🛰️ Explorando catálogo uruguayo - Página {pagina}...")
         
         url = "https://world.openfoodfacts.org/api/v2/search"
         params = {
             "countries_tags_en": "uruguay",
-            "labels_tags_en": "vegan",
+            # QUITAMOS EL FILTRO VEGANO DEL SERVIDOR PARA TRAER TODO
             "page": pagina,
-            "page_size": 50, 
-            "fields": "product_name_es,product_name,brands,code,image_url,ingredients_text_es"
+            "page_size": 100, # Lotes de 100 productos
+            # Pedimos los campos de etiquetas y de análisis de ingredientes
+            "fields": "product_name_es,product_name,brands,code,image_url,ingredients_text_es,labels_tags,ingredients_analysis_tags"
         }
         
         headers = { 'User-Agent': 'AppVeganaUY - rubengjm@gmail.com' }
 
-    # Intentamos la petición con un tiempo de espera muy largo
         try:
-            response = session.get(url, headers=headers, params=params, timeout=90)
+            response = session.get(url, headers=headers, params=params, timeout=60)
             
             if response.status_code != 200:
                 print(f"⚠️ Servidor ocupado ({response.status_code}). Saltando...")
@@ -70,45 +70,59 @@ def recolectar_masivo():
             productos = data.get('products', [])
 
             if not productos:
-                print(f"🏁 No hay más datos en página {pagina}.")
+                print(f"🏁 Fin del catálogo de Uruguay en la página {pagina}.")
                 break
 
             batch = db.batch()
-            conteo = 0
+            conteo_veganos = 0
 
             for p in productos:
                 codigo = str(p.get('code', ''))
                 if not codigo: continue
 
-                # Filtro de calidad manual (en nuestra PC, no en el servidor)
                 nombre = p.get('product_name_es') or p.get('product_name')
-                if not nombre: continue # Si no tiene nombre, lo ignoramos
+                if not nombre: continue 
 
-                doc_ref = db.collection('productos').document(codigo)
-                batch.set(doc_ref, {
-                    'nombre': nombre,
-                    'marca': p.get('brands', 'Marca desconocida'),
-                    'codigo': codigo,
-                    'es_vegano': True,
-                    'imagen': p.get('image_url', ''),
-                    'ingredientes': p.get('ingredients_text_es') or "Consultar envase",
-                    'fuente': f"https://world.openfoodfacts.org/product/{codigo}",
-                    'actualizado': firestore.SERVER_TIMESTAMP
-                }, merge=True)
-                conteo += 1
+                # --- EL COLADOR INTELIGENTE ---
+                etiquetas = p.get('labels_tags', [])
+                analisis_ingredientes = p.get('ingredients_analysis_tags', [])
 
-            if conteo > 0:
+                # 1. Tiene el sello vegano oficial cargado por el usuario
+                es_vegano_sello = 'en:vegan' in etiquetas
+                
+                # 2. El sistema de OFF leyó los ingredientes y determinó que es vegano
+                es_vegano_analisis = 'en:vegan' in analisis_ingredientes
+
+                # Si cumple cualquiera de las dos, ¡ADENTRO!
+                if es_vegano_sello or es_vegano_analisis:
+                    doc_ref = db.collection('productos').document(codigo)
+                    batch.set(doc_ref, {
+                        'nombre': nombre,
+                        'marca': p.get('brands', 'Marca desconocida'),
+                        'codigo': codigo,
+                        'es_vegano': True,
+                        'imagen': p.get('image_url', ''),
+                        'ingredientes': p.get('ingredients_text_es') or "Consultar envase",
+                        'fuente': f"https://world.openfoodfacts.org/product/{codigo}",
+                        'deteccion': 'Sello Oficial' if es_vegano_sello else 'Análisis de Ingredientes',
+                        'actualizado': firestore.SERVER_TIMESTAMP
+                    }, merge=True)
+                    conteo_veganos += 1
+
+            if conteo_veganos > 0:
                 batch.commit()
-                print(f"✅ Página {pagina}: {conteo} productos sincronizados.")
+                print(f"✅ Página {pagina}: ¡{conteo_veganos} productos veganos rescatados!")
+            else:
+                print(f"ℹ️ Página {pagina}: Se analizaron 100 productos, ninguno vegano.")
             
-            time.sleep(5) # Pausa larga para no estresar al servidor
+            time.sleep(2) 
 
         except Exception as e:
-            print(f"⚠️ Error de conexión en lote {pagina}: {e}. Reintentando después...")
-            time.sleep(10)
+            print(f"⚠️ Error en lote {pagina}: {e}. Reintentando después...")
+            time.sleep(5)
             continue
 
-    print("\n🏆 PROCESO FINALIZADO.")
+    print("\n🏆 BÚSQUEDA EXPANDIDA FINALIZADA.")
 
 if __name__ == "__main__":
     recolectar_masivo()
