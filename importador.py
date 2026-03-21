@@ -51,7 +51,7 @@ def recolectar_masivo():
             "code": "773*", # El asterisco busca todo lo que empiece con 773
             "labels_tags_en": "vegan",
             "page": pagina,
-            "page_size": 50, # Bajamos a 50 para que el servidor responda más rápido
+            "page_size": 20, # Bajamos a 50 para que el servidor responda más rápido
             "fields": "product_name,product_name_es,brands,code,image_url,ingredients_text_es,countries"
         }
         
